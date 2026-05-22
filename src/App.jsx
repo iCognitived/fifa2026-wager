@@ -118,7 +118,7 @@ function Countdown() {
             <span style={{ color:"#555" }}>₹{meta.wager.toLocaleString()} / match</span>
           </div>
         ))}
-        <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#444", marginTop:10, textAlign:"center" }}>Total pool · ₹20,000</div>
+        <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#444", marginTop:10, textAlign:"center" }}>Net settlement after the Final · July 19, 2026</div>
       </div>
     </div>
   );
@@ -189,26 +189,67 @@ export default function App() {
 
   // ── Derive wager results from API data ──
   const matchResults = {};
+  let finalPlayed = false;
   allFixtures.forEach(f => {
-    const home    = f.teams?.home?.name || "";
-    const away    = f.teams?.away?.name || "";
-    const homeWon = f.teams?.home?.winner;
-    const awayWon = f.teams?.away?.winner;
-    const id      = String(f.fixture?.id);
-    const stageKey = stageFromRound(f.league?.round);
-    const winner  = homeWon ? home : awayWon ? away : null;
+    const home      = f.teams?.home?.name || "";
+    const away      = f.teams?.away?.name || "";
+    const homeWon   = f.teams?.home?.winner;
+    const awayWon   = f.teams?.away?.winner;
+    const id        = String(f.fixture?.id);
+    const stageKey  = stageFromRound(f.league?.round);
+    const wager     = MATCH_STAGES[stageKey]?.wager || 500;
+    const homeOwner = getOwner(home);
+    const awayOwner = getOwner(away);
+
+    // Only process matches where at least one team is owned
+    if (!homeOwner && !awayOwner) return;
+
+    // Match has a result (FT)
+    const winner = homeWon ? home : awayWon ? away : null;
+    const loser  = homeWon ? away : awayWon ? home : null;
+
+    if (stageKey === "Final" && winner) finalPlayed = true;
+
+    // ── Both teams owned by same person → they win full wager regardless ──
+    if (homeOwner && awayOwner && homeOwner === awayOwner) {
+      matchResults[id] = {
+        owner: homeOwner,
+        stage: stageKey, home, away,
+        winnerTeam: winner || "TBD",
+        loserTeam:  loser  || "TBD",
+        wager,
+        bothOwned: true,
+        note: `${homeOwner} owns both — wins ₹${wager.toLocaleString()} regardless`
+      };
+      return;
+    }
+
+    // ── Normal match — only credit once result is in ──
     if (!winner) return;
-    const owner = getOwner(winner);
-    if (owner) matchResults[id] = { owner, stage: stageKey, home, away, winnerTeam: winner, wager: MATCH_STAGES[stageKey]?.wager || 500 };
+    const winOwner = getOwner(winner);
+    if (winOwner) {
+      matchResults[id] = {
+        owner: winOwner,
+        stage: stageKey, home, away,
+        winnerTeam: winner,
+        loserTeam:  loser || "",
+        wager,
+        bothOwned: false,
+        note: null
+      };
+    }
   });
 
-  let akEarned = 0, vaEarned = 0;
+  // Net settlement: each win adds that wager to your side
+  // At the end, loser pays winner the difference
+  let akTotal = 0, vaTotal = 0;
   Object.values(matchResults).forEach(r => {
-    if (r.owner === "Akshika") akEarned += r.wager * 2;
-    if (r.owner === "Varun")   vaEarned += r.wager * 2;
+    if (r.owner === "Akshika") akTotal += r.wager;
+    if (r.owner === "Varun")   vaTotal += r.wager;
   });
-  const akNet = akEarned - 10000;
-  const vaNet = vaEarned - 10000;
+  const netAmount    = Math.abs(akTotal - vaTotal);
+  const leadingPlayer = akTotal > vaTotal ? "Akshika" : vaTotal > akTotal ? "Varun" : null;
+  const trailingPlayer = leadingPlayer === "Akshika" ? "Varun" : leadingPlayer === "Varun" ? "Akshika" : null;
 
   const beforeStart = Date.now() < TOURNAMENT_START;
   const tabs = [["teams","👥 TEAMS"],["live","🔴 LIVE"],["results","✅ RESULTS"],["summary","📊 SUMMARY"]];
@@ -250,8 +291,8 @@ export default function App() {
         {lastSync && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:10, color:"#333", marginTop:3 }}>Last sync {lastSync.toLocaleTimeString()}</div>}
 
         {/* Score strip */}
-        <div style={{ marginTop:14, display:"flex", justifyContent:"center", gap:28, flexWrap:"wrap", alignItems:"center" }}>
-          <ScorePill name="Akshika" earned={akEarned} net={akNet} color="#ff9fd2" />
+        <div style={{ marginTop:14, display:"flex", justifyContent:"center", gap:20, flexWrap:"wrap", alignItems:"center" }}>
+          <ScorePill name="Akshika" total={akTotal} color="#ff9fd2" leading={leadingPlayer==="Akshika"} />
           <div style={{ textAlign:"center" }}>
             {fetchStatus==="ok" && (
               <div style={{ display:"flex", alignItems:"center", gap:5, justifyContent:"center", fontFamily:"'Inter',sans-serif", fontSize:11, color:"#81c784" }}>
@@ -261,8 +302,17 @@ export default function App() {
             {fetchStatus==="loading" && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#f5c518" }}>↻ FETCHING</div>}
             {fetchStatus==="error"   && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#ff6b6b" }}>⚠ API ERR</div>}
             {lastUpdated && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:10, color:"#333", marginTop:2 }}>{lastUpdated.toLocaleTimeString()}</div>}
+            {/* Net settlement badge */}
+            {netAmount > 0 && (
+              <div style={{ marginTop:6, fontFamily:"'Inter',sans-serif", fontSize:11, background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:20, padding:"3px 10px", color:"#fff" }}>
+                {finalPlayed
+                  ? <span>🏆 <span style={{ color: leadingPlayer==="Akshika"?"#ff9fd2":"#4fc3f7" }}>{trailingPlayer}</span> owes <span style={{ color:"#81c784" }}>₹{netAmount.toLocaleString()}</span></span>
+                  : <span><span style={{ color: leadingPlayer==="Akshika"?"#ff9fd2":"#4fc3f7" }}>{leadingPlayer}</span> leads by <span style={{ color:"#f5c518" }}>₹{netAmount.toLocaleString()}</span></span>
+                }
+              </div>
+            )}
           </div>
-          <ScorePill name="Varun" earned={vaEarned} net={vaNet} color="#4fc3f7" />
+          <ScorePill name="Varun" total={vaTotal} color="#4fc3f7" leading={leadingPlayer==="Varun"} />
         </div>
       </div>
 
@@ -367,21 +417,24 @@ export default function App() {
                 {fetchStatus==="loading" ? "Loading results…" : "No completed matches yet"}
               </div>
             ) : Object.entries(matchResults).map(([id,r]) => {
-              const isAk     = r.owner === "Akshika";
+              const isAk      = r.owner === "Akshika";
               const stageMeta = MATCH_STAGES[r.stage] || MATCH_STAGES["Group Stage"];
               return (
                 <div key={id} className="match-card" style={{ background: isAk ? "rgba(255,159,210,0.05)" : "rgba(79,195,247,0.05)", border:`1px solid ${isAk?"#ff9fd2":"#4fc3f7"}22` }}>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
                     <div>
                       <div style={{ fontFamily:"'Inter',sans-serif", fontSize:13, color:"#fff", fontWeight:600 }}>{r.home} vs {r.away}</div>
-                      <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#555", marginTop:3 }}>
+                      <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#555", marginTop:3, display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
                         <span style={{ color:stageMeta.color }}>{r.stage}</span>
-                        <span style={{ marginLeft:8 }}>Winner: <span style={{ color: isAk?"#ff9fd2":"#4fc3f7", fontWeight:600 }}>{r.winnerTeam}</span></span>
+                        {r.bothOwned
+                          ? <span style={{ background:"rgba(245,197,24,0.12)", color:"#f5c518", border:"1px solid rgba(245,197,24,0.25)", borderRadius:4, padding:"1px 6px" }}>⚡ Both owned by {r.owner}</span>
+                          : <span>Winner: <span style={{ color: isAk?"#ff9fd2":"#4fc3f7", fontWeight:600 }}>{r.winnerTeam}</span></span>
+                        }
                       </div>
                     </div>
                     <div style={{ textAlign:"right" }}>
                       <div style={{ fontFamily:"'Inter',sans-serif", fontSize:13, color: isAk?"#ff9fd2":"#4fc3f7", fontWeight:600 }}>{r.owner}</div>
-                      <div style={{ fontFamily:"'Inter',sans-serif", fontSize:14, color:"#81c784", fontWeight:600 }}>+₹{(r.wager*2).toLocaleString()}</div>
+                      <div style={{ fontFamily:"'Inter',sans-serif", fontSize:14, color:"#81c784", fontWeight:600 }}>+₹{r.wager.toLocaleString()}</div>
                     </div>
                   </div>
                 </div>
@@ -393,31 +446,70 @@ export default function App() {
         {/* ── SUMMARY TAB ── */}
         {tab==="summary" && (
           <div className="fade-in">
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
-              {[{name:"Akshika",earned:akEarned,net:akNet,color:"#ff9fd2"},{name:"Varun",earned:vaEarned,net:vaNet,color:"#4fc3f7"}].map(p => (
-                <div key={p.name} style={{ background:`${p.color}0c`, border:`1px solid ${p.color}28`, borderRadius:12, padding:18, textAlign:"center" }}>
-                  <div style={{ fontSize:22, color:p.color, letterSpacing:2 }}>{p.name}</div>
-                  <div style={{ fontFamily:"'Inter',sans-serif", marginTop:12 }}>
-                    <div style={{ fontSize:30, fontWeight:700, color:p.color }}>{Object.values(matchResults).filter(r=>r.owner===p.name).length}</div>
-                    <div style={{ fontSize:11, color:"#555", letterSpacing:1 }}>MATCH WINS</div>
+
+            {/* Settlement banner */}
+            <div style={{ borderRadius:12, padding:"18px 20px", marginBottom:14, textAlign:"center",
+              background: finalPlayed ? "rgba(129,199,132,0.08)" : "rgba(245,197,24,0.06)",
+              border: `1px solid ${finalPlayed ? "rgba(129,199,132,0.25)" : "rgba(245,197,24,0.2)"}` }}>
+              {finalPlayed ? (
+                <>
+                  <div style={{ fontSize:22, letterSpacing:2, color:"#81c784", marginBottom:6 }}>🏆 TOURNAMENT OVER</div>
+                  <div style={{ fontFamily:"'Inter',sans-serif", fontSize:14, color:"#fff" }}>
+                    <span style={{ color: leadingPlayer==="Akshika"?"#ff9fd2":"#4fc3f7", fontWeight:700 }}>{trailingPlayer}</span>
+                    {" pays "}
+                    <span style={{ color: leadingPlayer==="Akshika"?"#ff9fd2":"#4fc3f7", fontWeight:700 }}>{leadingPlayer}</span>
                   </div>
-                  <div style={{ fontFamily:"'Inter',sans-serif", marginTop:10 }}>
-                    <div style={{ fontSize:20, color:"#fff" }}>₹{p.earned.toLocaleString()}</div>
-                    <div style={{ fontSize:11, color:"#555", letterSpacing:1 }}>EARNED</div>
+                  <div style={{ fontSize:36, letterSpacing:2, color:"#81c784", marginTop:8 }}>₹{netAmount.toLocaleString()}</div>
+                  <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#555", marginTop:4 }}>
+                    {leadingPlayer} won ₹{(leadingPlayer==="Akshika"?akTotal:vaTotal).toLocaleString()} · {trailingPlayer} won ₹{(trailingPlayer==="Akshika"?akTotal:vaTotal).toLocaleString()} · net difference = ₹{netAmount.toLocaleString()}
                   </div>
-                  <div style={{ marginTop:10, fontFamily:"'Inter',sans-serif", fontSize:16, fontWeight:700, color: p.net>=0?"#81c784":"#ff6b6b" }}>
-                    {p.net>=0?"+":""}₹{p.net.toLocaleString()} net
+                </>
+              ) : (
+                <>
+                  <div style={{ fontSize:16, letterSpacing:2, color:"#f5c518", marginBottom:6 }}>
+                    {leadingPlayer ? `${leadingPlayer} LEADS` : "ALL SQUARE"}
                   </div>
-                  <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#444", marginTop:4 }}>from ₹10,000 pool</div>
-                </div>
-              ))}
+                  <div style={{ fontSize:30, letterSpacing:2, color: leadingPlayer==="Akshika"?"#ff9fd2":leadingPlayer==="Varun"?"#4fc3f7":"#fff" }}>
+                    {netAmount > 0 ? `₹${netAmount.toLocaleString()}` : "₹0"}
+                  </div>
+                  <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#555", marginTop:6 }}>
+                    Running tally · winner declared after the Final
+                  </div>
+                </>
+              )}
             </div>
+
+            {/* Per-player totals */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
+              {[{name:"Akshika",total:akTotal,color:"#ff9fd2"},{name:"Varun",total:vaTotal,color:"#4fc3f7"}].map(p => {
+                const wins = Object.values(matchResults).filter(r=>r.owner===p.name).length;
+                const isLeading = leadingPlayer === p.name;
+                return (
+                  <div key={p.name} style={{ background:`${p.color}0c`, border:`1px solid ${p.color}${isLeading?"44":"22"}`, borderRadius:12, padding:16, textAlign:"center", position:"relative" }}>
+                    {isLeading && <div style={{ position:"absolute", top:10, right:10, fontSize:14 }}>🔝</div>}
+                    <div style={{ fontSize:20, color:p.color, letterSpacing:2 }}>{p.name}</div>
+                    <div style={{ fontFamily:"'Inter',sans-serif", marginTop:10 }}>
+                      <div style={{ fontSize:28, fontWeight:700, color:p.color }}>{wins}</div>
+                      <div style={{ fontSize:11, color:"#555", letterSpacing:1 }}>MATCH WINS</div>
+                    </div>
+                    <div style={{ fontFamily:"'Inter',sans-serif", marginTop:10 }}>
+                      <div style={{ fontSize:20, color:"#fff" }}>₹{p.total.toLocaleString()}</div>
+                      <div style={{ fontSize:11, color:"#555", letterSpacing:1 }}>WAGERS WON</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Stage breakdown */}
             <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.06)", borderRadius:12, padding:16 }}>
-              <div style={{ fontSize:15, letterSpacing:2, marginBottom:12, color:"#888" }}>WAGER BY STAGE</div>
+              <div style={{ fontSize:15, letterSpacing:2, marginBottom:12, color:"#888" }}>BREAKDOWN BY STAGE</div>
               {Object.entries(MATCH_STAGES).map(([stage,meta]) => {
-                const sr  = Object.values(matchResults).filter(r => r.stage===stage);
-                const aW  = sr.filter(r => r.owner==="Akshika").length;
-                const vW  = sr.filter(r => r.owner==="Varun").length;
+                const sr = Object.values(matchResults).filter(r => r.stage===stage);
+                const aW = sr.filter(r => r.owner==="Akshika").length;
+                const vW = sr.filter(r => r.owner==="Varun").length;
+                const aAmt = aW * meta.wager;
+                const vAmt = vW * meta.wager;
                 return (
                   <div key={stage} style={{ padding:"8px 0", borderBottom:"1px solid rgba(255,255,255,0.04)" }}>
                     <div style={{ display:"flex", justifyContent:"space-between", fontFamily:"'Inter',sans-serif", fontSize:13 }}>
@@ -425,8 +517,8 @@ export default function App() {
                       <span style={{ color:"#444" }}>₹{meta.wager.toLocaleString()} / match</span>
                     </div>
                     <div style={{ display:"flex", justifyContent:"space-between", marginTop:4, fontFamily:"'Inter',sans-serif", fontSize:12 }}>
-                      <span><span style={{ color:"#ff9fd2" }}>Akshika: {aW}W</span>{aW>0&&<span style={{ color:"#81c784", marginLeft:6 }}>+₹{(aW*meta.wager*2).toLocaleString()}</span>}</span>
-                      <span><span style={{ color:"#4fc3f7" }}>Varun: {vW}W</span>{vW>0&&<span style={{ color:"#81c784", marginLeft:6 }}>+₹{(vW*meta.wager*2).toLocaleString()}</span>}</span>
+                      <span><span style={{ color:"#ff9fd2" }}>Akshika: {aW}W</span>{aAmt>0&&<span style={{ color:"#81c784", marginLeft:6 }}>+₹{aAmt.toLocaleString()}</span>}</span>
+                      <span><span style={{ color:"#4fc3f7" }}>Varun: {vW}W</span>{vAmt>0&&<span style={{ color:"#81c784", marginLeft:6 }}>+₹{vAmt.toLocaleString()}</span>}</span>
                     </div>
                   </div>
                 );
@@ -443,12 +535,13 @@ export default function App() {
   );
 }
 
-function ScorePill({ name, earned, net, color }) {
+function ScorePill({ name, total, color, leading }) {
   return (
     <div style={{ textAlign:"center" }}>
       <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#444", letterSpacing:1 }}>{name}</div>
-      <div style={{ fontSize:22, letterSpacing:2, color }}>₹{earned.toLocaleString()}</div>
-      <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color: net>=0?"#81c784":"#ff6b6b" }}>{net>=0?"+":""}₹{net.toLocaleString()} net</div>
+      <div style={{ fontSize:22, letterSpacing:2, color }}>₹{total.toLocaleString()}</div>
+      <div style={{ fontFamily:"'Inter',sans-serif", fontSize:10, color:"#555" }}>wagers won</div>
+      {leading && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:10, color:"#81c784", marginTop:2 }}>● LEADING</div>}
     </div>
   );
 }
