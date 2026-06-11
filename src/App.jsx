@@ -412,7 +412,7 @@ export default function App() {
                         <span className="pill" style={{ background:stageMeta.color+"22", color:stageMeta.color }}>{m.stage}</span>
                         {homeOwner && <span className="pill" style={{ background:homeOwner==="Akshika"?"rgba(255,159,210,0.12)":"rgba(79,195,247,0.12)", color:homeOwner==="Akshika"?"#ff9fd2":"#4fc3f7" }}>{m.home}: {homeOwner}</span>}
                         {awayOwner && <span className="pill" style={{ background:awayOwner==="Akshika"?"rgba(255,159,210,0.12)":"rgba(79,195,247,0.12)", color:awayOwner==="Akshika"?"#ff9fd2":"#4fc3f7" }}>{m.away}: {awayOwner}</span>}
-                        {bothSame && <span className="pill" style={{ background:"rgba(245,197,24,0.15)", color:"#f5c518" }}>⚡ {homeOwner} auto-wins ₹{stageMeta.wager.toLocaleString()}</span>}
+                        {bothSame && ["Semi-finals","Final"].includes(m.stage) && <span className="pill" style={{ background:"rgba(245,197,24,0.15)", color:"#f5c518" }}>⚡ {homeOwner} auto-wins ₹{stageMeta.wager.toLocaleString()}</span>}
                       </div>
                       {m.venue && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#444", marginTop:4 }}>📍 {m.venue}</div>}
                     </div>
