@@ -199,13 +199,14 @@ export default function App() {
     return () => { clearInterval(pollRef.current); clearInterval(slowPollRef.current); };
   }, [fetchLive, fetchStatic]);
 
-  // ── Derive wager results from finished + live ──
-  const allPlayed = [...finishedMatches, ...liveMatches.filter(m => m.winner)];
+  // ── Derive wager results from finished matches only ──
+  const BOTH_OWNED_STAGES = ["Semi-finals", "Final"];
   const matchResults = {};
   let finalPlayed = false;
 
-  allPlayed.forEach(m => {
-    const { id, home, away, winner, stage, homeGoals, awayGoals } = m;
+  finishedMatches.forEach(m => {
+    const { id, home, away, winner, stage, homeGoals, awayGoals, status } = m;
+    if (status !== "FINISHED") return; // never count in-progress matches
     const wager     = MATCH_STAGES[stage]?.wager || 500;
     const homeOwner = getOwner(home);
     const awayOwner = getOwner(away);
@@ -213,7 +214,8 @@ export default function App() {
 
     if (stage === "Final" && winner) finalPlayed = true;
 
-    if (homeOwner && awayOwner && homeOwner === awayOwner) {
+    // Both-owned auto-win only applies in Semi-finals and Final
+    if (homeOwner && awayOwner && homeOwner === awayOwner && BOTH_OWNED_STAGES.includes(stage)) {
       matchResults[id] = { owner: homeOwner, stage, home, away, winnerTeam: winner === "HOME_TEAM" ? home : away, wager, bothOwned: true };
       return;
     }
