@@ -6,8 +6,10 @@ import { doc, onSnapshot, setDoc } from "firebase/firestore";
 const API_KEY            = "b282e1081132398e6941085e9218c9f3";
 const FIFA_LEAGUE_ID     = 1;
 const FIFA_SEASON        = 2026;
-const POLL_MS            = 60000;
-const TOURNAMENT_START   = new Date("2026-06-11T20:00:00-04:00");
+const LIVE_POLL_MS       = 60000;   // 60s when live matches are on
+const IDLE_POLL_MS       = 300000;  // 5min when no live matches
+const SLOW_POLL_MS       = 600000;  // 10min for upcoming/finished (rarely change)
+const TOURNAMENT_START   = new Date("2026-06-11T15:00:00-04:00"); // Mexico vs South Africa, 3pm ET
 const FIRESTORE_DOC      = "shared/fifa2026";
 
 // ─── Fixed team allocation ────────────────────────────────────────────────────
@@ -105,7 +107,7 @@ function Countdown() {
         ))}
       </div>
       <div style={{ fontFamily:"'Inter',sans-serif", fontSize:12, color:"#444", marginTop:18 }}>
-        📅 Opening match · June 11, 2026 · Toronto
+        📅 Opening match · June 11, 2026 · Mexico City · Mexico vs South Africa
       </div>
       <div style={{ fontFamily:"'Inter',sans-serif", fontSize:12, color:"#444", marginTop:5 }}>
         Live scores will auto-populate once the tournament begins ⚽
@@ -126,35 +128,29 @@ function Countdown() {
 
 // ─── Main App ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [tab, setTab]                 = useState("teams");
-  const [liveMatches, setLiveMatches] = useState([]);
-  const [allFixtures, setAllFixtures] = useState([]);
-  const [lastUpdated, setLastUpdated] = useState(null);
-  const [fetchStatus, setFetchStatus] = useState("idle");
-  const [syncStatus, setSyncStatus]   = useState("connecting"); // connecting | live | error
-  const [lastSync, setLastSync]       = useState(null);
-  const pollRef  = useRef(null);
-  const isSaving = useRef(false);
+  const [tab, setTab]                     = useState("teams");
+  const [liveMatches, setLiveMatches]     = useState([]);
+  const [allFixtures, setAllFixtures]     = useState([]);
+  const [upcomingMatches, setUpcomingMatches] = useState([]);
+  const [lastUpdated, setLastUpdated]     = useState(null);
+  const [fetchStatus, setFetchStatus]     = useState("idle");
+  const [apiUsage, setApiUsage]           = useState(null); // { remaining, limit }
+  const [syncStatus, setSyncStatus]       = useState("connecting");
+  const [lastSync, setLastSync]           = useState(null);
+  const pollRef     = useRef(null);
+  const slowPollRef = useRef(null);
 
   // ── Firebase real-time listener ──
   useEffect(() => {
     setSyncStatus("connecting");
     const ref = doc(db, "shared", "fifa2026");
     const unsub = onSnapshot(ref,
-      (snap) => {
-        setSyncStatus("live");
-        setLastSync(new Date());
-        // State is fixed (teams don't change), just use snapshot for future extensibility
-      },
-      (err) => {
-        console.error("Firestore error:", err);
-        setSyncStatus("error");
-      }
+      () => { setSyncStatus("live"); setLastSync(new Date()); },
+      (err) => { console.error("Firestore error:", err); setSyncStatus("error"); }
     );
     return () => unsub();
   }, []);
 
-  // ── Ping Firestore to record last-seen (so both users see activity) ──
   useEffect(() => {
     if (syncStatus !== "live") return;
     const ref = doc(db, "shared", "fifa2026");
@@ -162,32 +158,74 @@ export default function App() {
       .catch(console.error);
   }, [syncStatus]);
 
-  // ── API fixture fetch ──
-  const fetchFixtures = useCallback(async () => {
+  // ── Live scores fetch (smart polling) ──
+  const fetchLive = useCallback(async () => {
+    if (Date.now() < TOURNAMENT_START) return; // don't call API before tournament
+    try {
+      const res  = await fetch(`https://v3.football.api-sports.io/fixtures?live=all&league=${FIFA_LEAGUE_ID}&season=${FIFA_SEASON}`, { headers:{ "x-apisports-key": API_KEY } });
+      const remaining = res.headers.get("x-ratelimit-requests-remaining");
+      const limit     = res.headers.get("x-ratelimit-requests-limit");
+      if (remaining !== null) setApiUsage({ remaining: parseInt(remaining), limit: parseInt(limit) });
+      const live = (await res.json()).response || [];
+      setLiveMatches(live);
+      setLastUpdated(new Date());
+      setFetchStatus("ok");
+
+      // Adjust poll speed: fast if live matches, slow otherwise
+      clearInterval(pollRef.current);
+      pollRef.current = setInterval(fetchLive, live.length > 0 ? LIVE_POLL_MS : IDLE_POLL_MS);
+    } catch {
+      setFetchStatus("error");
+    }
+  }, []);
+
+  // ── Finished + upcoming fetch (slow poll, rarely changes) ──
+  const fetchStatic = useCallback(async () => {
+    if (Date.now() < TOURNAMENT_START) return;
     setFetchStatus("loading");
     try {
-      const [liveRes, finRes] = await Promise.all([
-        fetch(`https://v3.football.api-sports.io/fixtures?live=all&league=${FIFA_LEAGUE_ID}&season=${FIFA_SEASON}`, { headers:{ "x-apisports-key": API_KEY } }),
-        fetch(`https://v3.football.api-sports.io/fixtures?league=${FIFA_LEAGUE_ID}&season=${FIFA_SEASON}&status=FT`,  { headers:{ "x-apisports-key": API_KEY } })
+      const [finRes, upRes] = await Promise.all([
+        fetch(`https://v3.football.api-sports.io/fixtures?league=${FIFA_LEAGUE_ID}&season=${FIFA_SEASON}&status=FT`, { headers:{ "x-apisports-key": API_KEY } }),
+        fetch(`https://v3.football.api-sports.io/fixtures?league=${FIFA_LEAGUE_ID}&season=${FIFA_SEASON}&status=NS&next=20`, { headers:{ "x-apisports-key": API_KEY } }),
       ]);
-      const live     = (await liveRes.json()).response || [];
-      const finished = (await finRes.json()).response  || [];
-      setLiveMatches(live);
-      setAllFixtures([...live, ...finished]);
-      setLastUpdated(new Date());
+      const finished  = (await finRes.json()).response || [];
+      const upcoming  = (await upRes.json()).response  || [];
+      setAllFixtures(prev => {
+        // Merge live matches with finished
+        const liveIds = new Set(prev.filter(f => f.fixture?.status?.short !== "FT").map(f => String(f.fixture?.id)));
+        return [...prev.filter(f => liveIds.has(String(f.fixture?.id))), ...finished];
+      });
+      setUpcomingMatches(upcoming);
       setFetchStatus("ok");
     } catch {
       setFetchStatus("error");
     }
   }, []);
 
+  // ── On mount: fetch everything once, then set up smart polling ──
   useEffect(() => {
-    fetchFixtures();
-    pollRef.current = setInterval(fetchFixtures, POLL_MS);
-    return () => clearInterval(pollRef.current);
-  }, [fetchFixtures]);
+    if (Date.now() >= TOURNAMENT_START) {
+      fetchStatic();
+      fetchLive();
+      pollRef.current     = setInterval(fetchLive,   IDLE_POLL_MS);
+      slowPollRef.current = setInterval(fetchStatic, SLOW_POLL_MS);
+    }
+    return () => {
+      clearInterval(pollRef.current);
+      clearInterval(slowPollRef.current);
+    };
+  }, [fetchLive, fetchStatic]);
 
-  // ── Derive wager results from API data ──
+  // Keep allFixtures in sync with live matches
+  useEffect(() => {
+    if (liveMatches.length === 0) return;
+    setAllFixtures(prev => {
+      const liveIds = new Set(liveMatches.map(f => String(f.fixture?.id)));
+      return [...prev.filter(f => !liveIds.has(String(f.fixture?.id))), ...liveMatches];
+    });
+  }, [liveMatches]);
+
+  // ── Derive wager results ──
   const matchResults = {};
   let finalPlayed = false;
   allFixtures.forEach(f => {
@@ -200,59 +238,30 @@ export default function App() {
     const wager     = MATCH_STAGES[stageKey]?.wager || 500;
     const homeOwner = getOwner(home);
     const awayOwner = getOwner(away);
-
-    // Only process matches where at least one team is owned
     if (!homeOwner && !awayOwner) return;
-
-    // Match has a result (FT)
     const winner = homeWon ? home : awayWon ? away : null;
     const loser  = homeWon ? away : awayWon ? home : null;
-
     if (stageKey === "Final" && winner) finalPlayed = true;
-
-    // ── Both teams owned by same person → they win full wager regardless ──
     if (homeOwner && awayOwner && homeOwner === awayOwner) {
-      matchResults[id] = {
-        owner: homeOwner,
-        stage: stageKey, home, away,
-        winnerTeam: winner || "TBD",
-        loserTeam:  loser  || "TBD",
-        wager,
-        bothOwned: true,
-        note: `${homeOwner} owns both — wins ₹${wager.toLocaleString()} regardless`
-      };
+      matchResults[id] = { owner: homeOwner, stage: stageKey, home, away, winnerTeam: winner || "TBD", loserTeam: loser || "TBD", wager, bothOwned: true, note: `${homeOwner} owns both — wins ₹${wager.toLocaleString()} regardless` };
       return;
     }
-
-    // ── Normal match — only credit once result is in ──
     if (!winner) return;
     const winOwner = getOwner(winner);
-    if (winOwner) {
-      matchResults[id] = {
-        owner: winOwner,
-        stage: stageKey, home, away,
-        winnerTeam: winner,
-        loserTeam:  loser || "",
-        wager,
-        bothOwned: false,
-        note: null
-      };
-    }
+    if (winOwner) matchResults[id] = { owner: winOwner, stage: stageKey, home, away, winnerTeam: winner, loserTeam: loser || "", wager, bothOwned: false, note: null };
   });
 
-  // Net settlement: each win adds that wager to your side
-  // At the end, loser pays winner the difference
   let akTotal = 0, vaTotal = 0;
   Object.values(matchResults).forEach(r => {
     if (r.owner === "Akshika") akTotal += r.wager;
     if (r.owner === "Varun")   vaTotal += r.wager;
   });
-  const netAmount    = Math.abs(akTotal - vaTotal);
-  const leadingPlayer = akTotal > vaTotal ? "Akshika" : vaTotal > akTotal ? "Varun" : null;
+  const netAmount      = Math.abs(akTotal - vaTotal);
+  const leadingPlayer  = akTotal > vaTotal ? "Akshika" : vaTotal > akTotal ? "Varun" : null;
   const trailingPlayer = leadingPlayer === "Akshika" ? "Varun" : leadingPlayer === "Varun" ? "Akshika" : null;
 
   const beforeStart = Date.now() < TOURNAMENT_START;
-  const tabs = [["teams","👥 TEAMS"],["live","🔴 LIVE"],["results","✅ RESULTS"],["summary","📊 SUMMARY"]];
+  const tabs = [["teams","👥 TEAMS"],["live","🔴 LIVE"],["schedule","📅 SCHEDULE"],["results","✅ RESULTS"],["summary","📊 SUMMARY"]];
 
   return (
     <div style={{ minHeight:"100vh", background:"linear-gradient(160deg,#080810 0%,#0d1520 60%,#080810 100%)", fontFamily:"'Bebas Neue','Impact',sans-serif", color:"#fff", overflowX:"hidden" }}>
@@ -287,6 +296,12 @@ export default function App() {
               {syncStatus==="live"?"FIREBASE LIVE": syncStatus==="connecting"?"CONNECTING…":"SYNC ERROR"}
             </span>
           </span>
+          {/* API quota badge */}
+          {apiUsage && (
+            <span style={{ fontFamily:"'Inter',sans-serif", fontSize:10, color: apiUsage.remaining < 20 ? "#ff6b6b" : "#444" }}>
+              API: {apiUsage.remaining}/{apiUsage.limit} req left today
+            </span>
+          )}
         </div>
         {lastSync && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:10, color:"#333", marginTop:3 }}>Last sync {lastSync.toLocaleTimeString()}</div>}
 
@@ -295,14 +310,13 @@ export default function App() {
           <ScorePill name="Akshika" total={akTotal} color="#ff9fd2" leading={leadingPlayer==="Akshika"} />
           <div style={{ textAlign:"center" }}>
             {fetchStatus==="ok" && (
-              <div style={{ display:"flex", alignItems:"center", gap:5, justifyContent:"center", fontFamily:"'Inter',sans-serif", fontSize:11, color:"#81c784" }}>
-                <span className="live-dot"/> API LIVE
+              <div style={{ display:"flex", alignItems:"center", gap:5, justifyContent:"center", fontFamily:"'Inter',sans-serif", fontSize:11, color: liveMatches.length > 0 ? "#ff4d4d" : "#81c784" }}>
+                {liveMatches.length > 0 ? <><span className="live-dot"/> LIVE POLLING 60s</> : <>● POLLING 5min</>}
               </div>
             )}
             {fetchStatus==="loading" && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#f5c518" }}>↻ FETCHING</div>}
             {fetchStatus==="error"   && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#ff6b6b" }}>⚠ API ERR</div>}
             {lastUpdated && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:10, color:"#333", marginTop:2 }}>{lastUpdated.toLocaleTimeString()}</div>}
-            {/* Net settlement badge */}
             {netAmount > 0 && (
               <div style={{ marginTop:6, fontFamily:"'Inter',sans-serif", fontSize:11, background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:20, padding:"3px 10px", color:"#fff" }}>
                 {finalPlayed
@@ -319,13 +333,13 @@ export default function App() {
       <div style={{ maxWidth:720, margin:"0 auto", padding:"16px 14px" }}>
 
         {/* ── Tabs ── */}
-        <div style={{ display:"flex", gap:7, marginBottom:16 }}>
+        <div style={{ display:"flex", gap:6, marginBottom:16, overflowX:"auto", paddingBottom:2 }}>
           {tabs.map(([t,label]) => (
             <button key={t} className="tab-btn" onClick={() => setTab(t)}
-              style={{ flex:1, padding:"9px 4px", borderRadius:8, letterSpacing:1, fontSize:11,
+              style={{ flex:"0 0 auto", padding:"9px 10px", borderRadius:8, letterSpacing:1, fontSize:11,
                 background: tab===t ? "#ff4d4d" : "rgba(255,255,255,0.05)",
                 border:     tab===t ? "none"     : "1px solid rgba(255,255,255,0.08)",
-                color:      tab===t ? "#fff"     : "#777" }}>
+                color:      tab===t ? "#fff"     : "#777", whiteSpace:"nowrap" }}>
               {label}
             </button>
           ))}
@@ -337,7 +351,6 @@ export default function App() {
             <div style={{ background:"rgba(255,77,77,0.06)", border:"1px solid rgba(255,77,77,0.15)", borderRadius:10, padding:"9px 14px", marginBottom:16, fontFamily:"'Inter',sans-serif", fontSize:12, color:"#ff8080", textAlign:"center" }}>
               🔒 Teams are fixed — synced live via Firebase
             </div>
-            {/* Allocation summary */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
               {[{name:"Akshika",color:"#ff9fd2",key:"akshika"},{name:"Varun",color:"#4fc3f7",key:"varun"}].map(p => (
                 <div key={p.name} style={{ background:`${p.color}0c`, border:`1px solid ${p.color}22`, borderRadius:10, padding:14, textAlign:"center" }}>
@@ -350,7 +363,6 @@ export default function App() {
                 </div>
               ))}
             </div>
-            {/* Teams by tier */}
             {["elite","mid","low"].map(tier => (
               <div key={tier} style={{ marginBottom:16 }}>
                 <div style={{ fontSize:16, letterSpacing:2, color:TIER_META[tier].color, marginBottom:8, borderBottom:`1px solid ${TIER_META[tier].color}22`, paddingBottom:6 }}>
@@ -378,7 +390,7 @@ export default function App() {
           <div className="fade-in">
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
               <div style={{ fontSize:16, letterSpacing:2 }}>🔴 LIVE MATCHES</div>
-              <button onClick={fetchFixtures} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", color:"#aaa", borderRadius:6, padding:"5px 12px", cursor:"pointer", fontFamily:"'Inter',sans-serif", fontSize:12 }}>↻ Refresh</button>
+              <button onClick={fetchLive} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", color:"#aaa", borderRadius:6, padding:"5px 12px", cursor:"pointer", fontFamily:"'Inter',sans-serif", fontSize:12 }}>↻ Refresh</button>
             </div>
             {liveMatches.length === 0 ? (
               beforeStart ? <Countdown /> :
@@ -400,6 +412,66 @@ export default function App() {
                       {min && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#ff4d4d", marginTop:2 }}>{min}'</div>}
                     </div>
                     <TeamBlock name={away} align="right" />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* ── SCHEDULE TAB ── */}
+        {tab==="schedule" && (
+          <div className="fade-in">
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+              <div style={{ fontSize:16, letterSpacing:2 }}>📅 UPCOMING MATCHES</div>
+              <button onClick={fetchStatic} style={{ background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.1)", color:"#aaa", borderRadius:6, padding:"5px 12px", cursor:"pointer", fontFamily:"'Inter',sans-serif", fontSize:12 }}>↻ Refresh</button>
+            </div>
+            {/* API usage tip */}
+            <div style={{ background:"rgba(245,197,24,0.06)", border:"1px solid rgba(245,197,24,0.15)", borderRadius:8, padding:"8px 12px", marginBottom:12, fontFamily:"'Inter',sans-serif", fontSize:11, color:"#888" }}>
+              ⚡ Schedule refreshes every 10 min · Live scores every {liveMatches.length > 0 ? "60s" : "5 min"}
+              {apiUsage && <span style={{ marginLeft:8, color: apiUsage.remaining < 20 ? "#ff6b6b" : "#555" }}>· {apiUsage.remaining} API calls left today</span>}
+            </div>
+            {beforeStart ? <Countdown /> : upcomingMatches.length === 0 ? (
+              <div style={{ textAlign:"center", padding:"50px 20px", fontFamily:"'Inter',sans-serif", color:"#444", fontSize:14 }}>
+                {fetchStatus==="loading" ? "Loading schedule…" : "No upcoming fixtures found"}
+              </div>
+            ) : upcomingMatches.map(f => {
+              const home      = f.teams?.home?.name || "?";
+              const away      = f.teams?.away?.name || "?";
+              const kickoff   = f.fixture?.date ? new Date(f.fixture.date) : null;
+              const venue     = f.fixture?.venue?.city || "";
+              const stageKey  = stageFromRound(f.league?.round || "");
+              const stageMeta = MATCH_STAGES[stageKey] || MATCH_STAGES["Group Stage"];
+              const homeOwner = getOwner(home);
+              const awayOwner = getOwner(away);
+              const bothSame  = homeOwner && awayOwner && homeOwner === awayOwner;
+              const isYours   = homeOwner || awayOwner;
+              return (
+                <div key={f.fixture.id} className="match-card" style={{
+                  background: isYours ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.02)",
+                  border: isYours ? "1px solid rgba(255,255,255,0.1)" : "1px solid rgba(255,255,255,0.05)",
+                  opacity: isYours ? 1 : 0.55
+                }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8, flexWrap:"wrap" }}>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontFamily:"'Inter',sans-serif", fontSize:13, color:"#fff", fontWeight:600 }}>{home} vs {away}</div>
+                      <div style={{ display:"flex", gap:5, flexWrap:"wrap", marginTop:5, alignItems:"center" }}>
+                        <span className="pill" style={{ background:stageMeta.color+"22", color:stageMeta.color }}>{stageKey}</span>
+                        {homeOwner && <span className="pill" style={{ background: homeOwner==="Akshika"?"rgba(255,159,210,0.12)":"rgba(79,195,247,0.12)", color: homeOwner==="Akshika"?"#ff9fd2":"#4fc3f7" }}>{home}: {homeOwner}</span>}
+                        {awayOwner && <span className="pill" style={{ background: awayOwner==="Akshika"?"rgba(255,159,210,0.12)":"rgba(79,195,247,0.12)", color: awayOwner==="Akshika"?"#ff9fd2":"#4fc3f7" }}>{away}: {awayOwner}</span>}
+                        {bothSame && <span className="pill" style={{ background:"rgba(245,197,24,0.15)", color:"#f5c518" }}>⚡ {homeOwner} auto-wins ₹{stageMeta.wager.toLocaleString()}</span>}
+                      </div>
+                      {venue && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#444", marginTop:4 }}>📍 {venue}</div>}
+                    </div>
+                    <div style={{ textAlign:"right", flexShrink:0 }}>
+                      {kickoff && (
+                        <>
+                          <div style={{ fontFamily:"'Inter',sans-serif", fontSize:12, color:"#666" }}>{kickoff.toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"})}</div>
+                          <div style={{ fontFamily:"'Inter',sans-serif", fontSize:14, color:"#f5c518", fontWeight:600 }}>{kickoff.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"})}</div>
+                        </>
+                      )}
+                      {isYours && <div style={{ fontFamily:"'Inter',sans-serif", fontSize:12, color:"#81c784", marginTop:3 }}>₹{stageMeta.wager.toLocaleString()}</div>}
+                    </div>
                   </div>
                 </div>
               );
@@ -446,8 +518,6 @@ export default function App() {
         {/* ── SUMMARY TAB ── */}
         {tab==="summary" && (
           <div className="fade-in">
-
-            {/* Settlement banner */}
             <div style={{ borderRadius:12, padding:"18px 20px", marginBottom:14, textAlign:"center",
               background: finalPlayed ? "rgba(129,199,132,0.08)" : "rgba(245,197,24,0.06)",
               border: `1px solid ${finalPlayed ? "rgba(129,199,132,0.25)" : "rgba(245,197,24,0.2)"}` }}>
@@ -479,7 +549,6 @@ export default function App() {
               )}
             </div>
 
-            {/* Per-player totals */}
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:14 }}>
               {[{name:"Akshika",total:akTotal,color:"#ff9fd2"},{name:"Varun",total:vaTotal,color:"#4fc3f7"}].map(p => {
                 const wins = Object.values(matchResults).filter(r=>r.owner===p.name).length;
@@ -501,13 +570,12 @@ export default function App() {
               })}
             </div>
 
-            {/* Stage breakdown */}
             <div style={{ background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.06)", borderRadius:12, padding:16 }}>
               <div style={{ fontSize:15, letterSpacing:2, marginBottom:12, color:"#888" }}>BREAKDOWN BY STAGE</div>
               {Object.entries(MATCH_STAGES).map(([stage,meta]) => {
-                const sr = Object.values(matchResults).filter(r => r.stage===stage);
-                const aW = sr.filter(r => r.owner==="Akshika").length;
-                const vW = sr.filter(r => r.owner==="Varun").length;
+                const sr   = Object.values(matchResults).filter(r => r.stage===stage);
+                const aW   = sr.filter(r => r.owner==="Akshika").length;
+                const vW   = sr.filter(r => r.owner==="Varun").length;
                 const aAmt = aW * meta.wager;
                 const vAmt = vW * meta.wager;
                 return (
@@ -524,7 +592,7 @@ export default function App() {
                 );
               })}
               <div style={{ fontFamily:"'Inter',sans-serif", fontSize:11, color:"#333", textAlign:"center", marginTop:12 }}>
-                Scores refresh every 60s · Firebase sync live · {lastSync ? `Last sync ${lastSync.toLocaleTimeString()}` : ""}
+                Live: 60s poll · Idle: 5min poll · Schedule: 10min poll · Firebase sync live
               </div>
             </div>
           </div>
