@@ -37,22 +37,34 @@ const MATCH_STAGES = {
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+const ALIASES = {
+  "united states": "usa", "u.s.a.": "usa", "u.s.": "usa",
+  "korea republic": "south korea", "republic of korea": "south korea",
+  "dr congo": "dr congo", "congo dr": "dr congo", "democratic republic of congo": "dr congo",
+  "trinidad and tobago": "trinidad & tobago",
+};
+function norm(name) {
+  if (!name) return "";
+  const n = name.trim().toLowerCase();
+  return ALIASES[n] || n;
+}
+
 function getOwner(teamName) {
   if (!teamName) return null;
-  const n = teamName.trim().toLowerCase();
+  const n = norm(teamName);
   for (const tier of ["elite","mid","low"]) {
-    if (SPLIT.akshika[tier].some(t => n.includes(t.toLowerCase()) || t.toLowerCase().includes(n))) return "Akshika";
-    if (SPLIT.varun[tier].some(t   => n.includes(t.toLowerCase()) || t.toLowerCase().includes(n))) return "Varun";
+    if (SPLIT.akshika[tier].some(t => { const tn = norm(t); return n === tn || n.includes(tn) || tn.includes(n); })) return "Akshika";
+    if (SPLIT.varun[tier].some(t   => { const tn = norm(t); return n === tn || n.includes(tn) || tn.includes(n); })) return "Varun";
   }
   return null;
 }
 
 function getTeamTier(teamName) {
   if (!teamName) return null;
-  const n = teamName.trim().toLowerCase();
+  const n = norm(teamName);
   for (const tier of ["elite","mid","low"]) {
-    if (SPLIT.akshika[tier].some(t => t.toLowerCase() === n)) return tier;
-    if (SPLIT.varun[tier].some(t   => t.toLowerCase() === n)) return tier;
+    if (SPLIT.akshika[tier].some(t => norm(t) === n)) return tier;
+    if (SPLIT.varun[tier].some(t   => norm(t) === n)) return tier;
   }
   return null;
 }
@@ -206,20 +218,24 @@ export default function App() {
 
   finishedMatches.forEach(m => {
     const { id, home, away, winner, stage, homeGoals, awayGoals, status } = m;
-    if (status !== "FINISHED") return; // never count in-progress matches
+    if (status !== "FINISHED") return;
     const wager     = MATCH_STAGES[stage]?.wager || 500;
     const homeOwner = getOwner(home);
     const awayOwner = getOwner(away);
-    if (!homeOwner && !awayOwner) return;
 
     if (stage === "Final" && winner) finalPlayed = true;
 
-    // Both-owned auto-win only applies in Semi-finals and Final
-    if (homeOwner && awayOwner && homeOwner === awayOwner && BOTH_OWNED_STAGES.includes(stage)) {
+    // Both owned by same person: auto-win only in Semi-finals/Final
+    if (homeOwner && awayOwner && homeOwner === awayOwner) {
+      if (!BOTH_OWNED_STAGES.includes(stage)) return; // no wager outside semis/final
       matchResults[id] = { owner: homeOwner, stage, home, away, winnerTeam: winner === "HOME_TEAM" ? home : away, wager, bothOwned: true };
       return;
     }
-    const winTeam  = winner === "HOME_TEAM" ? home : winner === "AWAY_TEAM" ? away : null;
+
+    // Both teams must be owned by different people for a wager to apply
+    if (!homeOwner || !awayOwner) return; // one or both unowned → no wager
+
+    const winTeam = winner === "HOME_TEAM" ? home : winner === "AWAY_TEAM" ? away : null;
     if (!winTeam) return;
     const winOwner = getOwner(winTeam);
     if (winOwner) matchResults[id] = { owner: winOwner, stage, home, away, winnerTeam: winTeam, wager, bothOwned: false, score: homeGoals !== null ? `${homeGoals}–${awayGoals}` : null };
@@ -396,7 +412,11 @@ export default function App() {
               const homeOwner = getOwner(m.home);
               const awayOwner = getOwner(m.away);
               const bothSame  = homeOwner && awayOwner && homeOwner === awayOwner;
-              const isYours   = homeOwner || awayOwner;
+              const bothDiff  = homeOwner && awayOwner && homeOwner !== awayOwner;
+              // A match has a wager only when both teams are owned by different people,
+              // OR it's a semi/final where both are owned by the same person
+              const hasWager  = bothDiff || (bothSame && ["Semi-finals","Final"].includes(m.stage));
+              const isYours   = hasWager;
               const stageMeta = MATCH_STAGES[m.stage] || MATCH_STAGES["Group Stage"];
               const kickoff   = m.date ? new Date(m.date) : null;
               return (
