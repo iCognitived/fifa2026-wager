@@ -10,13 +10,13 @@ const WC_EMBLEM        = "https://crests.football-data.org/wm26.png";
 
 const SPLIT = {
   akshika: {
-    elite: ["Argentina","England","Germany","Netherlands","Uruguay","Morocco"],
-    mid:   ["USA","Japan","Switzerland","Austria","Egypt","Senegal","Algeria","Australia","Canada"],
+    elite: ["Argentina","England","Germany","Netherlands","Uruguay","Morocco","USA"],
+    mid:   ["Japan","Switzerland","Austria","Egypt","Senegal","Algeria","Australia","Canada"],
     low:   ["Iran","Costa Rica","Chile","Panama","Jamaica","Qatar","South Africa","Bolivia","Honduras"]
   },
   varun: {
     elite: ["Brazil","France","Spain","Portugal","Belgium","Croatia"],
-    mid:   ["Mexico","Colombia","Ecuador","Turkey","Ukraine","Denmark","South Korea","Nigeria","Ghana"],
+    mid:   ["Mexico","Colombia","Ecuador","Turkey","Ukraine","Denmark","South Korea","Nigeria","Ghana","Norway"],
     low:   ["Poland","Paraguay","Peru","Cameroon","DR Congo","Saudi Arabia","Venezuela","Tunisia","Trinidad & Tobago"]
   }
 };
