@@ -29,6 +29,7 @@ const TIER_META = {
 
 const MATCH_STAGES = {
   "Group Stage":    { wager:500,  color:"#81c784" },
+  "Round of 32":    { wager:750,  color:"#66bb9a" },
   "Round of 16":    { wager:1000, color:"#4fc3f7" },
   "Quarter-finals": { wager:2000, color:"#f5c518" },
   "Semi-finals":    { wager:2500, color:"#ff9900" },
@@ -76,6 +77,7 @@ function stageFromStage(stage="") {
   if (s.includes("semi"))    return "Semi-finals";
   if (s.includes("quarter")) return "Quarter-finals";
   if (s.includes("round of 16")||s.includes("last 16")) return "Round of 16";
+  if (s.includes("round of 32")||s.includes("last 32")) return "Round of 32";
   return "Group Stage";
 }
 
