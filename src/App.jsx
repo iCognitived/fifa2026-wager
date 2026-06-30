@@ -71,13 +71,34 @@ function getTeamTier(teamName) {
   return null;
 }
 
-function stageFromStage(stage="") {
+// Known 2026 World Cup round boundaries (UTC), used as a fallback when the
+// API's `stage` field doesn't distinguish Round of 32 from Group Stage
+// (football-data.org's schema predates the 48-team format and has no
+// dedicated ROUND_OF_32 stage value).
+const ROUND_CUTOFFS = [
+  { after: "2026-07-09T00:00:00Z", stage: "Semi-finals" },     // SF: ~Jul 9-10
+  { after: "2026-07-04T00:00:00Z", stage: "Quarter-finals" },  // QF: ~Jul 4-5
+  { after: "2026-07-01T00:00:00Z", stage: "Round of 16" },     // R16: ~Jul 1-3
+  { after: "2026-06-27T12:00:00Z", stage: "Round of 32" },     // R32: ~Jun 28 - Jul 1
+];
+
+function stageFromStage(stage="", utcDate=null) {
   const s = stage.toLowerCase();
   if (s.includes("final")&&!s.includes("semi")&&!s.includes("quarter")&&!s.includes("third")) return "Final";
   if (s.includes("semi"))    return "Semi-finals";
   if (s.includes("quarter")) return "Quarter-finals";
   if (s.includes("round of 16")||s.includes("last 16")) return "Round of 16";
   if (s.includes("round of 32")||s.includes("last 32")) return "Round of 32";
+
+  // API said "group stage" (or gave nothing) — double check against the
+  // known calendar in case it's actually a later knockout round the API
+  // doesn't have a distinct label for.
+  if (utcDate) {
+    const d = new Date(utcDate).getTime();
+    for (const { after, stage: cutoffStage } of ROUND_CUTOFFS) {
+      if (d >= new Date(after).getTime()) return cutoffStage;
+    }
+  }
   return "Group Stage";
 }
 
@@ -103,7 +124,7 @@ function normaliseMatch(m) {
   const awayGoals = m.score?.fullTime?.away ?? null;
   const winner    = m.score?.winner;
   const duration  = m.score?.duration || "REGULAR";
-  const stage     = stageFromStage(m.stage || "");
+  const stage     = stageFromStage(m.stage || "", m.utcDate);
   const group     = m.group ? groupLabel(m.group) : null;
   const matchday  = m.matchday || null;
   const elapsed   = m.minute  || null;
