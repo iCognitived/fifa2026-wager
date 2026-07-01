@@ -419,6 +419,13 @@ export default function App() {
     const loser = r.winnerTeam === r.home ? r.away : r.home;
     if(loser) knockedOutTeams.add(loser.toLowerCase());
   });
+
+  // Teams that never qualified for the tournament at all
+  const NON_QUALIFIERS = new Set([
+    "australia","chile","costa rica","jamaica","bolivia","honduras",
+    "poland","peru","cameroon","venezuela","tunisia","trinidad & tobago",
+    "ukraine","denmark","nigeria","ghana",
+  ]);
   const netAmount=Math.abs(akTotal-vaTotal);
   const leadingPlayer=akTotal>vaTotal?"Akshika":vaTotal>akTotal?"Varun":null;
   const trailingPlayer=leadingPlayer==="Akshika"?"Varun":leadingPlayer==="Varun"?"Akshika":null;
@@ -514,7 +521,7 @@ export default function App() {
                   <div style={{fontSize:20,color:p.color,letterSpacing:2,marginBottom:8}}>{p.name}</div>
                   {["elite","mid","low"].map(t=>{
                     const total = SPLIT[p.key][t].length;
-                    const active = SPLIT[p.key][t].filter(tm=>!knockedOutTeams.has(tm.toLowerCase())).length;
+                    const active = SPLIT[p.key][t].filter(tm=>!knockedOutTeams.has(tm.toLowerCase())&&!NON_QUALIFIERS.has(tm.toLowerCase())).length;
                     return (
                       <div key={t} style={{fontFamily:"'Inter',sans-serif",fontSize:11,color:TIER_META[t].color,marginTop:3}}>
                         {TIER_META[t].label}: {active}/{total} active
@@ -533,13 +540,15 @@ export default function App() {
                       <div style={{fontFamily:"'Inter',sans-serif",fontSize:12,color:p.color,fontWeight:600,marginBottom:8}}>{p.name}</div>
                       <div>{SPLIT[p.key][tier].map(tm=>{
                         const isOut = knockedOutTeams.has(tm.toLowerCase());
+                        const isNQ  = NON_QUALIFIERS.has(tm.toLowerCase());
+                        const dead  = isOut || isNQ;
                         return (
                           <span key={tm} className="team-chip" style={{
-                            background: isOut ? "rgba(255,255,255,0.03)" : TIER_META[tier].bg,
-                            color: isOut ? "#333" : TIER_META[tier].color,
-                            border: `1px solid ${isOut ? "rgba(255,255,255,0.06)" : TIER_META[tier].color+"22"}`,
-                            opacity: isOut ? 0.5 : 1,
-                            textDecoration: isOut ? "line-through" : "none",
+                            background: dead ? TIER_META[tier].bg : TIER_META[tier].bg,
+                            color: TIER_META[tier].color,
+                            border: `1px solid ${TIER_META[tier].color}22`,
+                            opacity: dead ? 0.45 : 1,
+                            textDecoration: dead ? "line-through" : "none",
                           }}>{tm}</span>
                         );
                       })}</div>
