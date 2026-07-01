@@ -42,8 +42,9 @@ const BOTH_OWNED_STAGES = ["Semi-finals","Final"];
 const ALIASES = {
   "united states":"usa","u.s.a.":"usa","u.s.":"usa",
   "korea republic":"south korea","republic of korea":"south korea",
-  "dr congo":"dr congo","congo dr":"dr congo","democratic republic of congo":"dr congo",
+  "dr congo":"dr congo","congo dr":"dr congo","democratic republic of congo":"dr congo","democratic republic of the congo":"dr congo",
   "trinidad and tobago":"trinidad & tobago",
+  "türkiye":"turkey","turkiye":"turkey",
 };
 
 function norm(name) {
@@ -409,15 +410,16 @@ export default function App() {
     else if(r.owner==="Varun") vaTotal+=r.wager;
   });
 
-  // Teams knocked out = lost in any knockout round (R32 onwards)
-  // Group stage losses don't count since teams can still advance on points
+  // Build knockedOutTeams directly from raw finishedMatches so it's not
+  // affected by matchResults filtering (e.g. same-owner matches that get skipped)
   const KNOCKOUT_STAGES = ["Round of 32","Round of 16","Quarter-finals","Semi-finals","Third Place","Final"];
   const knockedOutTeams = new Set();
-  Object.values(matchResults).forEach(r=>{
-    if(!KNOCKOUT_STAGES.includes(r.stage)) return;
-    if(r.bothOwned) return; // both-owned matches don't eliminate anyone for our purposes
-    const loser = r.winnerTeam === r.home ? r.away : r.home;
-    if(loser) knockedOutTeams.add(loser.toLowerCase());
+  finishedMatches.forEach(m=>{
+    if(!KNOCKOUT_STAGES.includes(m.stage)) return;
+    const winner = m.winner;
+    if(!winner) return;
+    const loser = winner==="HOME_TEAM" ? m.away : m.home;
+    if(loser) knockedOutTeams.add(norm(loser));
   });
 
   // Teams that never qualified for the tournament at all
@@ -528,7 +530,7 @@ export default function App() {
                   <div style={{fontSize:20,color:p.color,letterSpacing:2,marginBottom:8}}>{p.name}</div>
                   {["elite","mid","low"].map(t=>{
                     const total = SPLIT[p.key][t].length;
-                    const active = SPLIT[p.key][t].filter(tm=>!knockedOutTeams.has(tm.toLowerCase())&&!NON_QUALIFIERS.has(tm.toLowerCase())&&!GROUP_ELIMINATED.has(tm.toLowerCase())).length;
+                    const active = SPLIT[p.key][t].filter(tm=>!knockedOutTeams.has(norm(tm))&&!NON_QUALIFIERS.has(norm(tm))&&!GROUP_ELIMINATED.has(norm(tm))).length;
                     return (
                       <div key={t} style={{fontFamily:"'Inter',sans-serif",fontSize:11,color:TIER_META[t].color,marginTop:3}}>
                         {TIER_META[t].label}: {active}/{total} active
@@ -546,9 +548,9 @@ export default function App() {
                     <div key={p.name} style={{background:`${p.color}0a`,border:`1px solid ${p.color}18`,borderRadius:10,padding:12}}>
                       <div style={{fontFamily:"'Inter',sans-serif",fontSize:12,color:p.color,fontWeight:600,marginBottom:8}}>{p.name}</div>
                       <div>{SPLIT[p.key][tier].map(tm=>{
-                        const isOut = knockedOutTeams.has(tm.toLowerCase());
-                        const isNQ  = NON_QUALIFIERS.has(tm.toLowerCase());
-                        const isGE  = GROUP_ELIMINATED.has(tm.toLowerCase());
+                        const isOut = knockedOutTeams.has(norm(tm));
+                        const isNQ  = NON_QUALIFIERS.has(norm(tm));
+                        const isGE  = GROUP_ELIMINATED.has(norm(tm));
                         const dead  = isOut || isNQ || isGE;
                         return (
                           <span key={tm} className="team-chip" style={{
