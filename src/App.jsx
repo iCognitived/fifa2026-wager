@@ -422,9 +422,16 @@ export default function App() {
 
   // Teams that never qualified for the tournament at all
   const NON_QUALIFIERS = new Set([
-    "australia","chile","costa rica","jamaica","bolivia","honduras",
-    "poland","peru","cameroon","venezuela","tunisia","trinidad & tobago",
-    "ukraine","denmark","nigeria","ghana",
+    "chile","costa rica","jamaica","bolivia","honduras", // akshika low
+    "poland","peru","cameroon","venezuela","tunisia","trinidad & tobago", // varun low
+    "ukraine","denmark","nigeria","ghana", // varun mid
+  ]);
+
+  // Teams that qualified but were eliminated in the group stage
+  // (can't be derived from matchResults since group stage losses don't = elimination)
+  const GROUP_ELIMINATED = new Set([
+    "australia","egypt","algeria","iran","qatar","panama", // akshika teams
+    "turkey","south korea","saudi arabia", // varun teams
   ]);
   const netAmount=Math.abs(akTotal-vaTotal);
   const leadingPlayer=akTotal>vaTotal?"Akshika":vaTotal>akTotal?"Varun":null;
@@ -521,7 +528,7 @@ export default function App() {
                   <div style={{fontSize:20,color:p.color,letterSpacing:2,marginBottom:8}}>{p.name}</div>
                   {["elite","mid","low"].map(t=>{
                     const total = SPLIT[p.key][t].length;
-                    const active = SPLIT[p.key][t].filter(tm=>!knockedOutTeams.has(tm.toLowerCase())&&!NON_QUALIFIERS.has(tm.toLowerCase())).length;
+                    const active = SPLIT[p.key][t].filter(tm=>!knockedOutTeams.has(tm.toLowerCase())&&!NON_QUALIFIERS.has(tm.toLowerCase())&&!GROUP_ELIMINATED.has(tm.toLowerCase())).length;
                     return (
                       <div key={t} style={{fontFamily:"'Inter',sans-serif",fontSize:11,color:TIER_META[t].color,marginTop:3}}>
                         {TIER_META[t].label}: {active}/{total} active
@@ -541,7 +548,8 @@ export default function App() {
                       <div>{SPLIT[p.key][tier].map(tm=>{
                         const isOut = knockedOutTeams.has(tm.toLowerCase());
                         const isNQ  = NON_QUALIFIERS.has(tm.toLowerCase());
-                        const dead  = isOut || isNQ;
+                        const isGE  = GROUP_ELIMINATED.has(tm.toLowerCase());
+                        const dead  = isOut || isNQ || isGE;
                         return (
                           <span key={tm} className="team-chip" style={{
                             background: dead ? TIER_META[tier].bg : TIER_META[tier].bg,
