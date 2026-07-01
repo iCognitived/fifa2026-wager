@@ -32,6 +32,7 @@ const MATCH_STAGES = {
   "Round of 32":    { wager:750,  color:"#66bb9a" },
   "Round of 16":    { wager:1000, color:"#4fc3f7" },
   "Quarter-finals": { wager:2000, color:"#f5c518" },
+  "Third Place":    { wager:2000, color:"#9575cd" },
   "Semi-finals":    { wager:2500, color:"#ff9900" },
   "Final":          { wager:3000, color:"#ff4d4d" },
 };
@@ -71,20 +72,23 @@ function getTeamTier(teamName) {
   return null;
 }
 
-// Known 2026 World Cup round boundaries (UTC), used as a fallback when the
+// Verified 2026 World Cup round boundaries (UTC), used as a fallback when the
 // API's `stage` field doesn't distinguish Round of 32 from Group Stage
 // (football-data.org's schema predates the 48-team format and has no
 // dedicated ROUND_OF_32 stage value).
+// Source: official FIFA calendar — Group Stage Jun 11-27, R32 Jun 28-Jul 3,
+// R16 Jul 4-7, QF Jul 9-11, SF Jul 14-15, 3rd place Jul 18, Final Jul 19.
 const ROUND_CUTOFFS = [
-  { after: "2026-07-09T00:00:00Z", stage: "Semi-finals" },     // SF: ~Jul 9-10
-  { after: "2026-07-04T00:00:00Z", stage: "Quarter-finals" },  // QF: ~Jul 4-5
-  { after: "2026-07-01T00:00:00Z", stage: "Round of 16" },     // R16: ~Jul 1-3
-  { after: "2026-06-27T12:00:00Z", stage: "Round of 32" },     // R32: ~Jun 28 - Jul 1
+  { after: "2026-07-14T00:00:00Z", stage: "Semi-finals" },     // SF: Jul 14-15
+  { after: "2026-07-09T00:00:00Z", stage: "Quarter-finals" },  // QF: Jul 9-11
+  { after: "2026-07-04T00:00:00Z", stage: "Round of 16" },     // R16: Jul 4-7
+  { after: "2026-06-28T00:00:00Z", stage: "Round of 32" },     // R32: Jun 28 - Jul 3
 ];
 
 function stageFromStage(stage="", utcDate=null) {
   const s = stage.toLowerCase();
-  if (s.includes("final")&&!s.includes("semi")&&!s.includes("quarter")&&!s.includes("third")) return "Final";
+  if (s.includes("third")) return "Third Place";
+  if (s.includes("final")&&!s.includes("semi")&&!s.includes("quarter")) return "Final";
   if (s.includes("semi"))    return "Semi-finals";
   if (s.includes("quarter")) return "Quarter-finals";
   if (s.includes("round of 16")||s.includes("last 16")) return "Round of 16";
@@ -95,6 +99,11 @@ function stageFromStage(stage="", utcDate=null) {
   // doesn't have a distinct label for.
   if (utcDate) {
     const d = new Date(utcDate).getTime();
+    // Third-place match is a narrow one-day window (Jul 18) sandwiched
+    // between Semi-finals and the Final — check it explicitly first.
+    if (d >= new Date("2026-07-18T00:00:00Z").getTime() && d < new Date("2026-07-19T00:00:00Z").getTime()) {
+      return "Third Place";
+    }
     for (const { after, stage: cutoffStage } of ROUND_CUTOFFS) {
       if (d >= new Date(after).getTime()) return cutoffStage;
     }
@@ -399,6 +408,17 @@ export default function App() {
     if(r.owner==="Akshika") akTotal+=r.wager;
     else if(r.owner==="Varun") vaTotal+=r.wager;
   });
+
+  // Teams knocked out = lost in any knockout round (R32 onwards)
+  // Group stage losses don't count since teams can still advance on points
+  const KNOCKOUT_STAGES = ["Round of 32","Round of 16","Quarter-finals","Semi-finals","Third Place","Final"];
+  const knockedOutTeams = new Set();
+  Object.values(matchResults).forEach(r=>{
+    if(!KNOCKOUT_STAGES.includes(r.stage)) return;
+    if(r.bothOwned) return; // both-owned matches don't eliminate anyone for our purposes
+    const loser = r.winnerTeam === r.home ? r.away : r.home;
+    if(loser) knockedOutTeams.add(loser.toLowerCase());
+  });
   const netAmount=Math.abs(akTotal-vaTotal);
   const leadingPlayer=akTotal>vaTotal?"Akshika":vaTotal>akTotal?"Varun":null;
   const trailingPlayer=leadingPlayer==="Akshika"?"Varun":leadingPlayer==="Varun"?"Akshika":null;
@@ -492,11 +512,15 @@ export default function App() {
               {[{name:"Akshika",color:"#ff9fd2",key:"akshika"},{name:"Varun",color:"#4fc3f7",key:"varun"}].map(p=>(
                 <div key={p.name} style={{background:`${p.color}0c`,border:`1px solid ${p.color}22`,borderRadius:10,padding:14,textAlign:"center"}}>
                   <div style={{fontSize:20,color:p.color,letterSpacing:2,marginBottom:8}}>{p.name}</div>
-                  {["elite","mid","low"].map(t=>(
-                    <div key={t} style={{fontFamily:"'Inter',sans-serif",fontSize:11,color:TIER_META[t].color,marginTop:3}}>
-                      {TIER_META[t].label}: {SPLIT[p.key][t].length} teams
-                    </div>
-                  ))}
+                  {["elite","mid","low"].map(t=>{
+                    const total = SPLIT[p.key][t].length;
+                    const active = SPLIT[p.key][t].filter(tm=>!knockedOutTeams.has(tm.toLowerCase())).length;
+                    return (
+                      <div key={t} style={{fontFamily:"'Inter',sans-serif",fontSize:11,color:TIER_META[t].color,marginTop:3}}>
+                        {TIER_META[t].label}: {active}/{total} active
+                      </div>
+                    );
+                  })}
                 </div>
               ))}
             </div>
@@ -507,9 +531,18 @@ export default function App() {
                   {[{name:"Akshika",color:"#ff9fd2",key:"akshika"},{name:"Varun",color:"#4fc3f7",key:"varun"}].map(p=>(
                     <div key={p.name} style={{background:`${p.color}0a`,border:`1px solid ${p.color}18`,borderRadius:10,padding:12}}>
                       <div style={{fontFamily:"'Inter',sans-serif",fontSize:12,color:p.color,fontWeight:600,marginBottom:8}}>{p.name}</div>
-                      <div>{SPLIT[p.key][tier].map(tm=>(
-                        <span key={tm} className="team-chip" style={{background:TIER_META[tier].bg,color:TIER_META[tier].color,border:`1px solid ${TIER_META[tier].color}22`}}>{tm}</span>
-                      ))}</div>
+                      <div>{SPLIT[p.key][tier].map(tm=>{
+                        const isOut = knockedOutTeams.has(tm.toLowerCase());
+                        return (
+                          <span key={tm} className="team-chip" style={{
+                            background: isOut ? "rgba(255,255,255,0.03)" : TIER_META[tier].bg,
+                            color: isOut ? "#333" : TIER_META[tier].color,
+                            border: `1px solid ${isOut ? "rgba(255,255,255,0.06)" : TIER_META[tier].color+"22"}`,
+                            opacity: isOut ? 0.5 : 1,
+                            textDecoration: isOut ? "line-through" : "none",
+                          }}>{tm}</span>
+                        );
+                      })}</div>
                     </div>
                   ))}
                 </div>
