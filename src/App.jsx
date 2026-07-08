@@ -73,38 +73,25 @@ function getTeamTier(teamName) {
   return null;
 }
 
-// Verified 2026 World Cup round boundaries (UTC), used as a fallback when the
-// API's `stage` field doesn't distinguish Round of 32 from Group Stage
-// (football-data.org's schema predates the 48-team format and has no
-// dedicated ROUND_OF_32 stage value).
-// Source: official FIFA calendar — Group Stage Jun 11-27, R32 Jun 28-Jul 3,
-// R16 Jul 4-7, QF Jul 9-11, SF Jul 14-15, 3rd place Jul 18, Final Jul 19.
 const ROUND_CUTOFFS = [
-  { after: "2026-07-14T00:00:00Z", stage: "Semi-finals" },     // SF: Jul 14-15
-  { after: "2026-07-09T00:00:00Z", stage: "Quarter-finals" },  // QF: Jul 9-11
-  { after: "2026-07-04T00:00:00Z", stage: "Round of 16" },     // R16: Jul 4-7
-  { after: "2026-06-28T00:00:00Z", stage: "Round of 32" },     // R32: Jun 28 - Jul 3
+  { after: "2026-07-14T00:00:00Z", stage: "Semi-finals" },
+  { after: "2026-07-09T00:00:00Z", stage: "Quarter-finals" },
+  { after: "2026-07-04T00:00:00Z", stage: "Round of 16" },
+  { after: "2026-06-28T00:00:00Z", stage: "Round of 32" },
 ];
 
+// FIX 1: normalize underscores → spaces so "ROUND_OF_16" matches "round of 16"
 function stageFromStage(stage="", utcDate=null) {
-  const s = stage.toLowerCase();
+  const s = stage.toLowerCase().replace(/_/g," ");
   if (s.includes("third")) return "Third Place";
   if (s.includes("final")&&!s.includes("semi")&&!s.includes("quarter")) return "Final";
   if (s.includes("semi"))    return "Semi-finals";
   if (s.includes("quarter")) return "Quarter-finals";
   if (s.includes("round of 16")||s.includes("last 16")) return "Round of 16";
   if (s.includes("round of 32")||s.includes("last 32")) return "Round of 32";
-
-  // API said "group stage" (or gave nothing) — double check against the
-  // known calendar in case it's actually a later knockout round the API
-  // doesn't have a distinct label for.
   if (utcDate) {
     const d = new Date(utcDate).getTime();
-    // Third-place match is a narrow one-day window (Jul 18) sandwiched
-    // between Semi-finals and the Final — check it explicitly first.
-    if (d >= new Date("2026-07-18T00:00:00Z").getTime() && d < new Date("2026-07-19T00:00:00Z").getTime()) {
-      return "Third Place";
-    }
+    if (d >= new Date("2026-07-18T00:00:00Z").getTime() && d < new Date("2026-07-19T00:00:00Z").getTime()) return "Third Place";
     for (const { after, stage: cutoffStage } of ROUND_CUTOFFS) {
       if (d >= new Date(after).getTime()) return cutoffStage;
     }
@@ -113,7 +100,6 @@ function stageFromStage(stage="", utcDate=null) {
 }
 
 function groupLabel(g="") {
-  // GROUP_A → Group A
   return g.replace("_"," ").replace(/\b\w/g,c=>c.toUpperCase());
 }
 
@@ -141,7 +127,6 @@ function normaliseMatch(m) {
   return { id:String(m.id), home, away, homeCrest, awayCrest, homeTLA, awayTLA, homeGoals, awayGoals, winner, duration, stage, group, matchday, elapsed, date:m.utcDate, venue:m.venue||"", status:m.status };
 }
 
-// ── Countdown ──
 function useCountdown() {
   const [t,setT] = useState(null);
   useEffect(()=>{
@@ -184,14 +169,12 @@ function Countdown() {
   );
 }
 
-// ── Crest image with fallback TLA ──
 function Crest({src, tla, size=28}) {
   const [err,setErr] = useState(false);
   if (!src||err) return <div style={{width:size,height:size,borderRadius:4,background:"rgba(255,255,255,0.06)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',sans-serif",fontSize:9,color:"#555",flexShrink:0}}>{tla||"?"}</div>;
   return <img src={src} alt={tla} onError={()=>setErr(true)} style={{width:size,height:size,objectFit:"contain",flexShrink:0}} />;
 }
 
-// ── Match card used in Live / Completed ──
 function MatchCard({ m, wagerResult, dim=false }) {
   const stageMeta = MATCH_STAGES[m.stage] || MATCH_STAGES["Group Stage"];
   const badge     = durationBadge(m.duration);
@@ -208,7 +191,6 @@ function MatchCard({ m, wagerResult, dim=false }) {
       borderLeft: wagerResult ? `3px solid ${borderColor}` : `1px solid ${borderColor}`,
       opacity: dim ? 0.45 : 1,
     }}>
-      {/* Group / matchday label */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:4}}>
         <div style={{display:"flex",gap:5,alignItems:"center",flexWrap:"wrap"}}>
           {m.group && <span className="pill" style={{background:"rgba(255,255,255,0.05)",color:"#555"}}>{m.group}</span>}
@@ -218,9 +200,7 @@ function MatchCard({ m, wagerResult, dim=false }) {
         {m.date && <span style={{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#444"}}>{new Date(m.date).toLocaleDateString(undefined,{month:"short",day:"numeric"})}</span>}
       </div>
 
-      {/* Teams + score */}
       <div style={{display:"flex",alignItems:"center",gap:8}}>
-        {/* Home */}
         <div style={{flex:1,display:"flex",alignItems:"center",gap:7}}>
           <Crest src={m.homeCrest} tla={m.homeTLA} />
           <div>
@@ -229,7 +209,6 @@ function MatchCard({ m, wagerResult, dim=false }) {
           </div>
         </div>
 
-        {/* Score */}
         <div style={{textAlign:"center",minWidth:60}}>
           {hasScore
             ? <div style={{fontSize:22,letterSpacing:3,color:"#fff",fontWeight:700}}>{m.homeGoals}<span style={{color:"#444",margin:"0 2px"}}>:</span>{m.awayGoals}</div>
@@ -238,7 +217,6 @@ function MatchCard({ m, wagerResult, dim=false }) {
           {m.elapsed && <div style={{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#ff4d4d",marginTop:2}}>{m.elapsed}'</div>}
         </div>
 
-        {/* Away */}
         <div style={{flex:1,display:"flex",alignItems:"center",gap:7,justifyContent:"flex-end"}}>
           <div style={{textAlign:"right"}}>
             <div style={{fontFamily:"'Inter',sans-serif",fontSize:13,fontWeight:600,color:"#fff"}}>{m.away}</div>
@@ -248,7 +226,6 @@ function MatchCard({ m, wagerResult, dim=false }) {
         </div>
       </div>
 
-      {/* Wager outcome */}
       {wagerResult && (
         <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid rgba(255,255,255,0.06)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <span style={{fontFamily:"'Inter',sans-serif",fontSize:11,color:"#555"}}>
@@ -263,7 +240,6 @@ function MatchCard({ m, wagerResult, dim=false }) {
   );
 }
 
-// ── Upcoming card (schedule tab) ──
 function UpcomingCard({ m }) {
   const homeOwner = getOwner(m.home);
   const awayOwner = getOwner(m.away);
@@ -279,7 +255,6 @@ function UpcomingCard({ m }) {
       border:"1px solid rgba(255,255,255,0.07)",
       opacity: hasWager ? 1 : 0.45,
     }}>
-      {/* Header row */}
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,flexWrap:"wrap",gap:4}}>
         <div style={{display:"flex",gap:5,flexWrap:"wrap",alignItems:"center"}}>
           {m.group && <span className="pill" style={{background:"rgba(255,255,255,0.05)",color:"#555"}}>{m.group}</span>}
@@ -294,7 +269,6 @@ function UpcomingCard({ m }) {
         )}
       </div>
 
-      {/* Teams */}
       <div style={{display:"flex",alignItems:"center",gap:8}}>
         <div style={{flex:1,display:"flex",alignItems:"center",gap:7}}>
           <Crest src={m.homeCrest} tla={m.homeTLA} />
@@ -319,16 +293,15 @@ function UpcomingCard({ m }) {
   );
 }
 
-// ── Main App ──
 export default function App() {
-  const [tab,setTab]                       = useState("teams");
-  const [liveMatches,setLiveMatches]       = useState([]);
+  const [tab,setTab]                         = useState("teams");
+  const [liveMatches,setLiveMatches]         = useState([]);
   const [finishedMatches,setFinishedMatches] = useState([]);
   const [upcomingMatches,setUpcomingMatches] = useState([]);
-  const [lastUpdated,setLastUpdated]       = useState(null);
-  const [fetchStatus,setFetchStatus]       = useState("idle");
-  const [syncStatus,setSyncStatus]         = useState("connecting");
-  const [lastSync,setLastSync]             = useState(null);
+  const [lastUpdated,setLastUpdated]         = useState(null);
+  const [fetchStatus,setFetchStatus]         = useState("idle");
+  const [syncStatus,setSyncStatus]           = useState("connecting");
+  const [lastSync,setLastSync]               = useState(null);
   const pollRef     = useRef(null);
   const slowPollRef = useRef(null);
 
@@ -344,12 +317,16 @@ export default function App() {
     setDoc(doc(db,"shared","fifa2026"),{lastSeen:new Date().toISOString()},{merge:true}).catch(console.error);
   },[syncStatus]);
 
+  // FIX 2: fetch both IN_PLAY and PAUSED so half-time matches show in Live tab
   const fetchLive = useCallback(async()=>{
     if(Date.now()<TOURNAMENT_START) return;
     try {
-      const r=await fetch("/api/fixtures?type=live");
-      const data=await r.json();
-      const matches=(data.matches||[]).map(normaliseMatch);
+      const [r1,r2] = await Promise.all([
+        fetch("/api/fixtures?type=live"),
+        fetch("/api/fixtures?type=paused"),
+      ]);
+      const [d1,d2] = await Promise.all([r1.json(),r2.json()]);
+      const matches = [...(d1.matches||[]),...(d2.matches||[])].map(normaliseMatch);
       setLiveMatches(matches);
       setLastUpdated(new Date());
       setFetchStatus("ok");
@@ -383,7 +360,6 @@ export default function App() {
     return ()=>{clearInterval(pollRef.current);clearInterval(slowPollRef.current);};
   },[fetchLive,fetchStatic]);
 
-  // ── Wager results ──
   const matchResults = {};
   let finalPlayed = false;
   finishedMatches.forEach(m=>{
@@ -410,8 +386,8 @@ export default function App() {
     else if(r.owner==="Varun") vaTotal+=r.wager;
   });
 
-  // Build knockedOutTeams directly from raw finishedMatches so it's not
-  // affected by matchResults filtering (e.g. same-owner matches that get skipped)
+  // FIX 3: build knockedOutTeams from finishedMatches directly (not matchResults)
+  // so same-owner matches (e.g. Netherlands vs Morocco) don't get skipped
   const KNOCKOUT_STAGES = ["Round of 32","Round of 16","Quarter-finals","Semi-finals","Third Place","Final"];
   const knockedOutTeams = new Set();
   finishedMatches.forEach(m=>{
@@ -422,19 +398,17 @@ export default function App() {
     if(loser) knockedOutTeams.add(norm(loser));
   });
 
-  // Teams that never qualified for the tournament at all
   const NON_QUALIFIERS = new Set([
-    "chile","costa rica","jamaica","bolivia","honduras", // akshika low
-    "poland","peru","cameroon","venezuela","tunisia","trinidad & tobago", // varun low
-    "ukraine","denmark","nigeria","ghana", // varun mid
+    "chile","costa rica","jamaica","bolivia","honduras",
+    "poland","peru","cameroon","venezuela","tunisia","trinidad & tobago",
+    "ukraine","denmark","nigeria","ghana",
   ]);
 
-  // Teams that qualified but were eliminated in the group stage
-  // (can't be derived from matchResults since group stage losses don't = elimination)
   const GROUP_ELIMINATED = new Set([
-    "australia","egypt","algeria","iran","qatar","panama", // akshika teams
-    "turkey","south korea","saudi arabia", // varun teams
+    "australia","egypt","algeria","iran","qatar","panama",
+    "turkey","south korea","saudi arabia",
   ]);
+
   const netAmount=Math.abs(akTotal-vaTotal);
   const leadingPlayer=akTotal>vaTotal?"Akshika":vaTotal>akTotal?"Varun":null;
   const trailingPlayer=leadingPlayer==="Akshika"?"Varun":leadingPlayer==="Varun"?"Akshika":null;
@@ -464,7 +438,6 @@ export default function App() {
         .pill{border-radius:6px;padding:2px 8px;font-family:'Inter',sans-serif;font-size:11px;font-weight:600}
       `}</style>
 
-      {/* Header */}
       <div style={{background:"linear-gradient(90deg,#ff4d4d1a,#f5c5181a,#ff4d4d1a)",borderBottom:"1px solid rgba(255,255,255,0.07)",padding:"16px 20px",textAlign:"center"}}>
         <div style={{display:"flex",justifyContent:"center",alignItems:"center",gap:10,marginBottom:4}}>
           <img src={WC_EMBLEM} alt="FIFA WC 2026" style={{width:32,height:32,objectFit:"contain"}} onError={e=>e.target.style.display="none"} />
@@ -505,7 +478,6 @@ export default function App() {
       </div>
 
       <div style={{maxWidth:720,margin:"0 auto",padding:"16px 14px"}}>
-        {/* Tabs */}
         <div style={{display:"flex",gap:5,marginBottom:16,overflowX:"auto",paddingBottom:2}}>
           {tabs.map(([t,label])=>(
             <button key={t} className="tab-btn" onClick={()=>setTab(t)}
@@ -548,15 +520,12 @@ export default function App() {
                     <div key={p.name} style={{background:`${p.color}0a`,border:`1px solid ${p.color}18`,borderRadius:10,padding:12}}>
                       <div style={{fontFamily:"'Inter',sans-serif",fontSize:12,color:p.color,fontWeight:600,marginBottom:8}}>{p.name}</div>
                       <div>{SPLIT[p.key][tier].map(tm=>{
-                        const isOut = knockedOutTeams.has(norm(tm));
-                        const isNQ  = NON_QUALIFIERS.has(norm(tm));
-                        const isGE  = GROUP_ELIMINATED.has(norm(tm));
-                        const dead  = isOut || isNQ || isGE;
+                        const dead = knockedOutTeams.has(norm(tm))||NON_QUALIFIERS.has(norm(tm))||GROUP_ELIMINATED.has(norm(tm));
                         return (
                           <span key={tm} className="team-chip" style={{
-                            background: dead ? TIER_META[tier].bg : TIER_META[tier].bg,
-                            color: TIER_META[tier].color,
-                            border: `1px solid ${TIER_META[tier].color}22`,
+                            background:TIER_META[tier].bg,
+                            color:TIER_META[tier].color,
+                            border:`1px solid ${TIER_META[tier].color}22`,
                             opacity: dead ? 0.45 : 1,
                             textDecoration: dead ? "line-through" : "none",
                           }}>{tm}</span>
@@ -635,7 +604,6 @@ export default function App() {
                 {fetchStatus==="loading"?"Loading results…":"No wager results yet"}
               </div>
             ):Object.values(matchResults).sort((a,b)=>new Date(b.date)-new Date(a.date)).map(r=>{
-              // reconstruct a match-like object for MatchCard
               const m={id:r.id||Math.random(),home:r.home,away:r.away,homeCrest:r.homeCrest,awayCrest:r.awayCrest,homeTLA:r.homeTLA,awayTLA:r.awayTLA,homeGoals:r.score?parseInt(r.score):null,awayGoals:r.score?parseInt(r.score.split("–")[1]):null,stage:r.stage,group:null,date:null,duration:r.duration||"REGULAR",elapsed:null,status:"FINISHED"};
               return <MatchCard key={r.home+r.away+r.stage} m={m} wagerResult={r} />;
             })}
