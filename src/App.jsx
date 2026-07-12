@@ -405,8 +405,8 @@ export default function App() {
   ]);
 
   const GROUP_ELIMINATED = new Set([
-    "australia","egypt","algeria","iran","qatar","panama",
-    "turkey","south korea","saudi arabia",
+    "australia","egypt","algeria","iran","qatar","panama","uruguay", // akshika teams
+    "turkey","south korea","saudi arabia","dr congo", // varun teams
   ]);
 
   const netAmount=Math.abs(akTotal-vaTotal);
