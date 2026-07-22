@@ -1,0 +1,65 @@
+# 📝 Notes for FIFA 2030 (or whenever this gets revived)
+
+Built by Varun for the FIFA World Cup 2026 wager. Live-synced via
+Firebase, deployed on Vercel, retired after the 2026 Final. If you're reading
+this in the future to rebuild — here's everything that made it work.
+
+## The wager structure
+- 48 teams split into 3 tiers per person: **Elite** (6 each), **Mid** (9 each,
+  +1 wildcard added mid-tournament for a late qualifier), **Low** (9 each).
+- Fixed wager per stage, paid on every match where an owned team plays:
+  - Group Stage ₹500 · Round of 32 ₹750 · Round of 16 ₹1,000 ·
+    Quarter-finals ₹2,000 · Third Place ₹2,000 · Semi-finals ₹2,500 ·
+    Final ₹3,000
+- **Same-owner matchups**: if both teams in a match belong to the same
+  person, they auto-win that stage's wager — no need to wait for a result.
+- Net settlement happens once at the end: whoever accumulated more in
+  wagers, the other pays the difference.
+- Team allocation gets **locked before the tournament starts** — no trades,
+  no do-overs. Decide the split, write it into the code, done.
+
+## Architecture that worked well
+- **Frontend**: React + Vite, deployed on Vercel with auto-deploy on GitHub
+  push. Simple tab layout (Teams / Live / Results / Summary) was enough —
+  no need for anything fancier.
+- **Sync**: Firebase Firestore for real-time state between two devices.
+  Lightweight — really just needed a shared "last seen" ping and consistent
+  reads, not complex data modeling.
+- **Live data**: football-data.org v4 API via a Vercel serverless proxy
+  (`api/fixtures.js`) — don't use api-sports.io/API-Football, it blocked
+  free-tier access mid-tournament in 2026.
+- Polling: 60s during live matches, 5 min idle, 10 min for static fixture
+  data. No need to poll harder than that.
+
+## Hard-won lessons (don't repeat these)
+1. **Never let an AI assistant (or yourself) rewrite the whole file.**
+   A full-file regression once wiped out entire tabs; had to roll back via
+   Vercel deployment history. Always make small, targeted, surgical patches
+   — and always view the current file before editing it.
+2. **The football-data.org schema won't match a 48-team format cleanly.**
+   Their stage/round labels predate the expanded bracket — you'll likely
+   need date-based cutoffs to detect Round of 32 and similar new stages.
+   Also watch for underscore-formatted stage names (e.g. `ROUND_OF_16`)
+   needing normalization for display.
+3. **PSO/AET winner fields aren't booleans in some APIs** — check whether
+   `score.winner` is a string like `"HOME_TEAM"` / `"AWAY_TEAM"` rather than
+   assuming a boolean `winner: true/false` on each team.
+4. **Keep live matches visible through half-time** by fetching both
+   `IN_PLAY` and `PAUSED` statuses, not just one.
+5. **Track eliminations as separate sets**, not one big list: non-qualifiers,
+   group-stage eliminations (manually maintained, since APIs often don't
+   flag this cleanly), and knockout eliminations (can auto-populate from
+   finished match data).
+6. **Rotate API keys before deploying**, and restrict Firebase's web API key
+   to your actual Vercel domain in the Firebase Console — don't leave it
+   wide open.
+
+## If you rebuild this in 2030
+- Grab the tagged version from GitHub: `iCognitived/fifa2026-wager`,
+  tag `fifa2026-final`.
+- Re-check whichever live-scores API is still alive and affordable —
+  don't assume football-data.org's schema or free tier is unchanged.
+- Everything else — the wager math, the tier logic, the UI — should port
+  over almost as-is. Just re-split the 48 (or however many) teams.
+
+Good luck, and may the better bettor win. 🏆
